@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     # Kalshi API
     KALSHI_API_KEY_ID: Optional[str] = None
     KALSHI_PRIVATE_KEY_PATH: Optional[str] = None
+    KALSHI_PRIVATE_KEY_PEM: Optional[str] = None  # raw PEM content, for envs without file access (e.g. Railway)
     KALSHI_ENABLED: bool = True
 
     # AI API Keys
