@@ -175,8 +175,14 @@ async def generate_weather_signal(market: WeatherMarket) -> Optional[WeatherTrad
     return signal
 
 
-async def scan_weather_markets() -> List[WeatherTradingSignal]:
-    """Scan all weather markets and generate signals."""
+async def scan_for_weather_signals() -> List[WeatherTradingSignal]:
+    """
+    Scan all weather markets and generate signals.
+
+    NOTE: function name kept as scan_for_weather_signals to match the
+    import expected by backend/core/scheduler.py — do not rename without
+    updating the scheduler's weather_scan_and_trade_job() import too.
+    """
     from backend.data.kalshi_markets import fetch_kalshi_weather_markets
 
     signals = []
