@@ -11,5 +11,13 @@ export default defineConfig({
         changeOrigin: true
       }
     }
+  },
+  preview: {
+    port: Number(process.env.PORT) || 4173,
+    host: '0.0.0.0',
+    allowedHosts: [
+      'content-spontaneity-production-3cf7.up.railway.app',
+      '.up.railway.app'
+    ]
   }
 })
