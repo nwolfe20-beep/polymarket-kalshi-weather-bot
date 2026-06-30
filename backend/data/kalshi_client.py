@@ -16,7 +16,6 @@ logger = logging.getLogger("trading_bot")
 
 BASE_URL = "https://api.elections.kalshi.com/trade-api/v2"
 
-
 class KalshiClient:
     """Async Kalshi API client using RSA-PSS signature auth."""
 
@@ -24,22 +23,39 @@ class KalshiClient:
         self._private_key = None
 
     def _load_private_key(self):
-        """Load RSA private key from file (lazy, cached)."""
+        """
+        Load RSA private key, lazy + cached.
+
+        Two sources supported:
+          1. KALSHI_PRIVATE_KEY_PEM - raw PEM content as an env var.
+             Used in environments without persistent file access (e.g. Railway).
+          2. KALSHI_PRIVATE_KEY_PATH - path to a PEM file on disk.
+             Used for local/traditional deployments.
+
+        PEM env var takes priority if both are set.
+        """
         if self._private_key is not None:
             return self._private_key
 
+        pem_env = settings.KALSHI_PRIVATE_KEY_PEM
         key_path = settings.KALSHI_PRIVATE_KEY_PATH
-        if not key_path:
-            raise ValueError("KALSHI_PRIVATE_KEY_PATH not configured")
 
-        pem_data = Path(key_path).expanduser().read_bytes()
-        self._private_key = serialization.load_pem_private_key(pem_data, password=None)
-        return self._private_key
+        if pem_env:
+            # Env vars sometimes flatten newlines to literal \n - restore them.
+            pem_data = pem_env.replace("\\n", "\n").encode("utf-8")
+            self._private_key = serialization.load_pem_private_key(pem_data, password=None)
+            return self._private_key
+
+        if key_path:
+            pem_data = Path(key_path).expanduser().read_bytes()
+            self._private_key = serialization.load_pem_private_key(pem_data, password=None)
+            return self._private_key
+
+        raise ValueError("Neither KALSHI_PRIVATE_KEY_PEM nor KALSHI_PRIVATE_KEY_PATH is configured")
 
     def _sign_request(self, method: str, path: str) -> Dict[str, str]:
         """
         Generate auth headers for a Kalshi API request.
-
         Signature = RSA-PSS-sign(timestamp_ms + METHOD + path)
         where path = /trade-api/v2/... (no query params).
         """
@@ -94,5 +110,7 @@ class KalshiClient:
 
 
 def kalshi_credentials_present() -> bool:
-    """Check if Kalshi API credentials are configured."""
-    return bool(settings.KALSHI_API_KEY_ID and settings.KALSHI_PRIVATE_KEY_PATH)
+    """Check if Kalshi API credentials are configured (PEM env var or file path)."""
+    has_key_id = bool(settings.KALSHI_API_KEY_ID)
+    has_key_material = bool(settings.KALSHI_PRIVATE_KEY_PEM or settings.KALSHI_PRIVATE_KEY_PATH)
+    return has_key_id and has_key_material
