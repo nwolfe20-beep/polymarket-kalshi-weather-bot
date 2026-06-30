@@ -2,6 +2,7 @@
 import base64
 import hashlib
 import logging
+import re
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -16,6 +17,44 @@ logger = logging.getLogger("trading_bot")
 
 BASE_URL = "https://api.elections.kalshi.com/trade-api/v2"
 
+def _normalize_pem(raw: str) -> bytes:
+    """
+    Normalize a PEM string from an env var into well-formed PEM bytes.
+
+    Handles all the ways a multi-line PEM can get mangled when passed
+    through env vars, copy-paste, or shell escaping:
+      - literal backslash-n sequences instead of real newlines
+      - Windows-style \r\n line endings
+      - leading/trailing whitespace on the whole blob
+      - extra blank lines or whitespace-only lines
+      - missing trailing newline before END marker
+    """
+    text = raw.strip()
+
+    # If it contains literal "\n" (backslash + n as two chars) but no real
+    # newlines, the env var flattened the key onto one line - unflatten it.
+    if "\\n" in text and "\n" not in text:
+        text = text.replace("\\n", "\n")
+
+    # Normalize Windows line endings
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+
+    # Split into lines, strip each, drop empties, rejoin. This rebuilds
+    # clean PEM framing regardless of how mangled the whitespace got.
+    lines = [ln.strip() for ln in text.split("\n")]
+    lines = [ln for ln in lines if ln]  # drop blank lines
+
+    if not lines or "BEGIN" not in lines[0] or "END" not in lines[-1]:
+        raise ValueError(
+            f"PEM content doesn't look like a valid key block. "
+            f"First line: {lines[0] if lines else '(empty)'!r} "
+            f"Last line: {lines[-1] if lines else '(empty)'!r}"
+        )
+
+    normalized = "\n".join(lines) + "\n"
+    return normalized.encode("utf-8")
+
+
 class KalshiClient:
     """Async Kalshi API client using RSA-PSS signature auth."""
 
@@ -29,6 +68,7 @@ class KalshiClient:
         Two sources supported:
           1. KALSHI_PRIVATE_KEY_PEM - raw PEM content as an env var.
              Used in environments without persistent file access (e.g. Railway).
+             Run through _normalize_pem() to survive env-var mangling.
           2. KALSHI_PRIVATE_KEY_PATH - path to a PEM file on disk.
              Used for local/traditional deployments.
 
@@ -41,10 +81,13 @@ class KalshiClient:
         key_path = settings.KALSHI_PRIVATE_KEY_PATH
 
         if pem_env:
-            # Env vars sometimes flatten newlines to literal \n - restore them.
-            pem_data = pem_env.replace("\\n", "\n").encode("utf-8")
-            self._private_key = serialization.load_pem_private_key(pem_data, password=None)
-            return self._private_key
+            try:
+                pem_bytes = _normalize_pem(pem_env)
+                self._private_key = serialization.load_pem_private_key(pem_bytes, password=None)
+                return self._private_key
+            except Exception as e:
+                logger.error(f"Failed to load KALSHI_PRIVATE_KEY_PEM: {e}")
+                raise
 
         if key_path:
             pem_data = Path(key_path).expanduser().read_bytes()
